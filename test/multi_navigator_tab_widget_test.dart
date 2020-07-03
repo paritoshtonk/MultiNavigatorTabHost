@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:MultiNavigatorTabHost/MultiNavigatorTabHost.dart';
+import 'package:multi_navigator_tab_widget/multi_navigator_tab_widget.dart';
 
 void main() {
   test('adds one to input values', () {

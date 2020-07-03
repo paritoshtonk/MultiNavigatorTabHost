@@ -1,4 +1,4 @@
-library MultiNavigatorTabHost;
+library multi_navigator_tab_widget;
 
 /// A Calculator.
 class Calculator {

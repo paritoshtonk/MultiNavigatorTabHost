@@ -2,43 +2,58 @@ library multi_navigator_tab_widget;
 
 import 'package:flutter/widgets.dart';
 
-typedef CreateTabCallback = List<Widget> Function(
-    BuildContext context, int count, int selected);
+typedef CreateTabCallback = Widget Function(
+    BuildContext context, int index, int count, bool selected, String title);
 typedef PageRouteCallback = Route<dynamic> Function(
     RouteSettings setting, int index);
+typedef OnUnknownRoute = Route<dynamic> Function(RouteSettings settings);
 
 class MultiNavigatorTabHost extends StatefulWidget {
   MultiNavigatorTabHost(
       {Key key,
-      @required this.onCreateTabs,
+      @required this.onCreateTab,
       @required this.pageRouteCallback,
-      this.initialTabCount,
-      this.tabBarBackgroundColor,
-      this.bottomTabs,
-      this.alignment})
+      @required this.initialTabNames,
+      @required this.initialTabCount,
+      this.onUnknownRoute,
+      this.tabBarBackgroundColor = const Color(0),
+      this.bottomTabs = false,
+      this.alignment = Alignment.center,
+      this.initialRoute = "/"})
       : super(key: key) {
     if (initialTabCount != null && initialTabCount < 1)
       throw FormatException("initialTabCount needs to be atleast 1",
           initialTabCount, initialTabCount);
+    if (initialTabCount != initialTabNames.length)
+      throw FormatException("There needs to be initialTabCount intialTabNames");
   }
-
-  final CreateTabCallback onCreateTabs;
+  final OnUnknownRoute onUnknownRoute;
+  final CreateTabCallback onCreateTab;
   final PageRouteCallback pageRouteCallback;
   final int initialTabCount;
   final bool bottomTabs;
   final Alignment alignment;
   final Color tabBarBackgroundColor;
+  final List<String> initialTabNames;
+  final String initialRoute;
 
   @override
   MultiNavigatorTabHostState createState() => MultiNavigatorTabHostState();
+
+  static MultiNavigatorTabHostState of(BuildContext context) {
+    return context.findAncestorStateOfType<MultiNavigatorTabHostState>();
+  }
 }
 
 class MultiNavigatorTabHostState extends State<MultiNavigatorTabHost> {
   List<GlobalKey<NavigatorState>> _navigatorStateKeys = [];
   int _currentTab = 0;
-
+  List<String> _titles = [];
+  Map<int, RouteSettings> initialRouteSettingsMap = {};
+  Map<int, Route<dynamic>> initialRouteMap = {};
   int get currentTab => _currentTab;
   int get tabCount => _navigatorStateKeys.length;
+
   static MultiNavigatorTabHostState of(BuildContext context) {
     return context.findAncestorStateOfType<MultiNavigatorTabHostState>();
   }
@@ -46,29 +61,65 @@ class MultiNavigatorTabHostState extends State<MultiNavigatorTabHost> {
   @override
   void initState() {
     super.initState();
-    int count = widget.initialTabCount;
-    if (count == null) count = 1;
-    for (int i = 0; i < count; i++) _navigatorStateKeys.add(new GlobalKey());
+    for (int i = 0; i < widget.initialTabCount; i++)
+      _navigatorStateKeys.add(new GlobalKey());
+    _titles.addAll(widget.initialTabNames);
   }
 
-  void addTab({bool focusOnNewTab}) {
-    setState(() {
-      _navigatorStateKeys.add(GlobalKey());
-      if (focusOnNewTab != null && focusOnNewTab)
-        _currentTab = _navigatorStateKeys.length - 1;
+  void setTitle(BuildContext context, String title) {
+    var key = _navigatorStateKeys.firstWhere((element) {
+      return element.currentState == Navigator.of(context);
     });
+    final int index = _navigatorStateKeys.indexOf(key);
+    if (_titles[index] != title) {
+      setState(() {
+        _titles[index] = title;
+      });
+    }
   }
 
-  void addTabAt(index, {bool focusOnNewTab}) {
+  String getTitle(int index) {
+    return _titles[index];
+  }
+
+  void addTab(String title,
+      {bool focusOnNewTab,
+      String routeName,
+      Object arguments,
+      Route<dynamic> route}) {
+    addTabAt(_navigatorStateKeys.length, title,
+        focusOnNewTab: focusOnNewTab,
+        route: route,
+        routeName: routeName,
+        arguments: arguments);
+  }
+
+  void addTabAt(int index, String title,
+      {bool focusOnNewTab,
+      String routeName,
+      Object arguments,
+      Route<dynamic> route}) {
     if (index < 0 || index > _navigatorStateKeys.length) {
       throw FormatException("Index is out of bound");
     }
+
+    if (routeName == null && route == null)
+      throw Exception("Either Specify the Route or RouteName");
+
     setState(() {
+      if (routeName != null) {
+        initialRouteSettingsMap[index] =
+            RouteSettings(name: routeName, arguments: arguments);
+      } else {
+        initialRouteMap[index] = route;
+      }
       if (index == _navigatorStateKeys.length) {
         _navigatorStateKeys.add(GlobalKey());
+        _titles.add(title);
         if (focusOnNewTab != null && focusOnNewTab)
           _currentTab = _navigatorStateKeys.length - 1;
       } else {
+        _titles.insert(index, title);
         _navigatorStateKeys.insert(index, GlobalKey());
         if (focusOnNewTab != null && focusOnNewTab && index <= currentTab)
           _currentTab++;
@@ -80,11 +131,15 @@ class MultiNavigatorTabHostState extends State<MultiNavigatorTabHost> {
     if (_navigatorStateKeys.length == 1)
       throw Exception(
           "Underflow: Cant remove the only tab. There needs to be atleast one tab.");
+
     if (index < 0 || index >= _navigatorStateKeys.length)
       throw FormatException("Index is out of bound");
+
     setState(() {
-      if (index == _navigatorStateKeys.length - 1) _currentTab -= 1;
+      if (index < currentTab) _currentTab--;
+      if (_currentTab == _navigatorStateKeys.length - 1) _currentTab--;
       _navigatorStateKeys.removeAt(index);
+      _titles.removeAt(index);
     });
   }
 
@@ -92,27 +147,34 @@ class MultiNavigatorTabHostState extends State<MultiNavigatorTabHost> {
     if (index < 0 || index >= _navigatorStateKeys.length) {
       throw FormatException("Index is out of bound");
     }
+
     setState(() {
       _currentTab = index;
     });
   }
 
   List<Widget> _getTabs(BuildContext context) {
-    var tabs =
-        widget.onCreateTabs(context, _navigatorStateKeys.length, currentTab);
-    if (tabs.length != _navigatorStateKeys.length) {
-      throw Exception("Tab Count is not equal to Navigator counts");
+    List<Widget> tabs = [];
+    for (int index = 0; index < tabCount; index++) {
+      Widget tab;
+      if (_titles[index] == null)
+        tab = SizedBox();
+      else
+        tab = widget.onCreateTab(context, index, _navigatorStateKeys.length,
+            currentTab == index, _titles[index]);
+      if (tab == null) {
+        throw Exception("Tab cant be null. Tab with index $index is null.");
+      }
+      tabs.add(tab);
     }
     return tabs;
   }
 
   Widget _getTabScrollWidget(BuildContext iContext) {
     return Container(
-      color: widget.tabBarBackgroundColor == null
-          ? Color(0)
-          : widget.tabBarBackgroundColor,
+      color: widget.tabBarBackgroundColor,
       child: Align(
-        alignment: widget.alignment ?? Alignment.center,
+        alignment: widget.alignment,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
@@ -138,16 +200,14 @@ class MultiNavigatorTabHostState extends State<MultiNavigatorTabHost> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              if (widget.bottomTabs == null || !widget.bottomTabs)
-                _getTabScrollWidget(iContext),
+              if (!widget.bottomTabs) _getTabScrollWidget(iContext),
               Expanded(
                 child: IndexedStack(
                   index: currentTab,
                   children: _getNavigatorsWidgets(),
                 ),
               ),
-              if (widget.bottomTabs != null && widget.bottomTabs)
-                _getTabScrollWidget(iContext),
+              if (widget.bottomTabs) _getTabScrollWidget(iContext),
             ],
           );
         },
@@ -157,15 +217,27 @@ class MultiNavigatorTabHostState extends State<MultiNavigatorTabHost> {
 
   List<Widget> _getNavigatorsWidgets() {
     List<Widget> navigators = [];
-    for (int i = 0; i < _navigatorStateKeys.length; i++)
+    for (int i = 0; i < _navigatorStateKeys.length; i++) {
       navigators.add(
         Navigator(
           key: _navigatorStateKeys[i],
+          onUnknownRoute: widget.onUnknownRoute,
+          initialRoute: _navigatorStateKeys[i].currentState == null &&
+                  initialRouteSettingsMap.containsKey(i)
+              ? initialRouteSettingsMap[i].name
+              : widget.initialRoute,
           onGenerateRoute: (routeSettings) {
+            if (initialRouteMap.containsKey(i)) {
+              var route = initialRouteMap[i];
+              initialRouteMap.clear();
+              return route;
+            }
             return widget.pageRouteCallback(routeSettings, i);
           },
         ),
       );
+    }
+    initialRouteSettingsMap.clear();
     return navigators;
   }
 }
